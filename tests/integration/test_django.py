@@ -2,7 +2,9 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import os.path
+import time
 from contextlib import contextmanager
+from datetime import datetime
 
 import django
 import pytest
@@ -336,6 +338,56 @@ def test_old_style_username_exception(tracked_requests):
     assert len(tracked_requests) == 1
     tr = tracked_requests[0]
     assert "username" not in tr.tags
+
+
+@pytest.mark.parametrize("header_name", ["X-Queue-Start", "X-Request-Start"])
+def test_queue_time(header_name, tracked_requests):
+    # Not testing floats due to Python 2/3 rounding differences
+    queue_start = int(time.time() - 2)
+    with app_with_scout() as app:
+        response = TestApp(app).get(
+            "/", headers={header_name: str("t=") + str(queue_start)}
+        )
+        assert response.status_int == 200
+
+    assert len(tracked_requests) == 1
+    spans = tracked_requests[0].complete_spans
+    assert [s.operation for s in spans] == [
+        "QueueTime/Request",
+        "Controller/tests.integration.django_app.home",
+        "Middleware",
+    ]
+    assert spans[0].start_time == datetime.utcfromtimestamp(queue_start)
+
+
+def test_queue_time_invalid(tracked_requests):
+    with app_with_scout() as app:
+        response = TestApp(app).get("/", headers={"X-Queue-Start": str("t=X")})
+        assert response.status_int == 200
+
+    assert len(tracked_requests) == 1
+    spans = tracked_requests[0].complete_spans
+    assert [s.operation for s in spans] == [
+        "Controller/tests.integration.django_app.home",
+        "Middleware",
+    ]
+
+
+def test_queue_time_future(tracked_requests):
+    # Not testing floats due to Python 2/3 rounding differences
+    queue_start = int(time.time() + 2)
+    with app_with_scout() as app:
+        response = TestApp(app).get(
+            "/", headers={"X-Queue-Start": str("t=") + str(queue_start)}
+        )
+        assert response.status_int == 200
+
+    assert len(tracked_requests) == 1
+    spans = tracked_requests[0].complete_spans
+    assert [s.operation for s in spans] == [
+        "Controller/tests.integration.django_app.home",
+        "Middleware",
+    ]
 
 
 @pytest.mark.parametrize("list_or_tuple", [list, tuple])

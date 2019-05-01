@@ -2,21 +2,34 @@
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
+import django
 from django.conf import settings
 from django.core.wsgi import get_wsgi_application
 from django.db import connection
 from django.http import HttpResponse
 from django.template import engines
 
-settings.configure(
-    ALLOWED_HOSTS=["*"],
-    DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
-    DEBUG=True,
-    ROOT_URLCONF=__name__,
-    SECRET_KEY="********",
-    TEMPLATES=[{"BACKEND": "django.template.backends.django.DjangoTemplates"}],
-    TIME_ZONE="America/Chicago",
-)
+
+config = {
+    "ALLOWED_HOSTS": ["*"],
+    "DATABASES": {
+        "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}
+    },
+    "DEBUG": True,
+    "ROOT_URLCONF": __name__,
+    "SECRET_KEY": "********",
+    "TEMPLATES": [{"BACKEND": "django.template.backends.django.DjangoTemplates"}],
+    "TIME_ZONE": "America/Chicago",
+    "INSTALLED_APPS": ["scout_apm.django"],
+}
+
+if django.VERSION > (1, 10):
+    config["MIDDLEWARE"] = []
+else:
+    config["MIDDLEWARE_CLASSES"] = []
+
+
+settings.configure(**config)
 
 
 def home(request):

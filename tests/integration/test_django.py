@@ -5,15 +5,15 @@ from contextlib import contextmanager
 
 import django
 import pytest
+from django.apps import apps
 from django.conf import settings
-from django.core.wsgi import get_wsgi_application
-from django.test.utils import modify_settings, override_settings
+from django.test.utils import override_settings
 from webtest import TestApp
 
 from scout_apm.api import Config
 from scout_apm.core.tracked_request import TrackedRequest
 
-from .django_app import app as app_unused  # noqa: F401
+from .django_app import app
 
 try:
     from unittest.mock import Mock, patch
@@ -30,10 +30,25 @@ skip_unless_old_style_middleware = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def ensure_no_django_config_applied_after_tests():
+    """
+    Prevent state leaking into the non-Django tests. All config needs to be set
+    with @override_settings so that the on_setting_changed handler removes
+    them from the dictionary afterwards.
+    """
+    yield
+    assert all(
+        (key != "BASE_DIR" and not key.startswith("SCOUT_")) for key in dir(settings)
+    )
+
+
 @contextmanager
 def app_with_scout(config=None):
     """
-    Context manager that configures and installs the Scout plugin for Django.
+    Context manager that simply overrides settings. Unlike the other web
+    frameworks, Django uses a singleton application, so we can't smoothly
+    uninstall and reinstall scout per test.
     """
     # Enable Scout by default in tests.
     if config is None:
@@ -44,27 +59,7 @@ def app_with_scout(config=None):
 
     # Setup according to https://docs.scoutapm.com/#django
     with override_settings(**config):
-        # Prevent durable changes to MIDDLEWARE and MIDDLEWARE_CLASSES by
-        # replacing them with a copy of their value.
-        for name in ["MIDDLEWARE", "MIDDLEWARE_CLASSES"]:
-            try:
-                value = getattr(settings, name)
-            except AttributeError:
-                pass
-            else:
-                setattr(settings, name, value)
-        # Scout settings must be overridden before inserting scout_apm.django
-        # in INSTALLED_APPS because ScoutApmDjangoConfig.ready() accesses it.
-        with modify_settings(INSTALLED_APPS={"prepend": "scout_apm.django"}):
-            try:
-                # Django initializes middleware when in creates the WSGI app.
-                # Modifying MIDDLEWARE setting has no effect on the app.
-                # Create a new WSGI app to account for the new middleware
-                # that "scout_apm.django" injected.
-                yield get_wsgi_application()
-            finally:
-                # Reset Scout configuration.
-                Config.reset_all()
+        yield app
 
 
 @pytest.fixture(autouse=True)
@@ -78,6 +73,18 @@ def finish_tracked_request_if_old_style_middlware():
     finally:
         if django.VERSION < (2, 0):
             TrackedRequest.instance().finish()
+
+
+def test_on_setting_changed_application_root():
+    with override_settings(BASE_DIR="/tmp/foobar"):
+        assert Config().value("application_root") == "/tmp/foobar"
+    assert Config().value("application_root") == ""
+
+
+def test_on_setting_changed_monitor():
+    with override_settings(SCOUT_MONITOR=True):
+        assert Config().value("monitor") is True
+    assert Config().value("monitor") is False
 
 
 def test_home():
@@ -240,36 +247,58 @@ def test_old_style_username_exception():
             assert response.status_int == 200
 
 
+@pytest.mark.skipif(django.VERSION >= (1, 10), reason="Testing old style middleware")
 @pytest.mark.parametrize("list_or_tuple", [list, tuple])
-@skip_unless_new_style_middleware
-def test_middleware(list_or_tuple):
-    with override_settings(
-        MIDDLEWARE=list_or_tuple(["django.middleware.common.CommonMiddleware"])
-    ):
-        with app_with_scout():
-            assert settings.MIDDLEWARE == list_or_tuple(
-                [
-                    "scout_apm.django.middleware.MiddlewareTimingMiddleware",
-                    "django.middleware.common.CommonMiddleware",
-                    "scout_apm.django.middleware.ViewTimingMiddleware",
-                ]
-            )
+@pytest.mark.parametrize("preinstalled", [True, False])
+def test_install_middleware_old_style(list_or_tuple, preinstalled):
+    if preinstalled:
+        middleware = list_or_tuple(
+            [
+                "scout_apm.django.middleware.OldStyleMiddlewareTimingMiddleware",
+                "django.middleware.common.CommonMiddleware",
+                "scout_apm.django.middleware.OldStyleViewMiddleware",
+            ]
+        )
+    else:
+        middleware = list_or_tuple(["django.middleware.common.CommonMiddleware"])
+
+    with override_settings(MIDDLEWARE_CLASSES=middleware):
+        apps.get_app_config("scout_apm").install_middleware()
+
+        assert settings.MIDDLEWARE_CLASSES == list_or_tuple(
+            [
+                "scout_apm.django.middleware.OldStyleMiddlewareTimingMiddleware",
+                "django.middleware.common.CommonMiddleware",
+                "scout_apm.django.middleware.OldStyleViewMiddleware",
+            ]
+        )
 
 
+@pytest.mark.skipif(django.VERSION < (1, 10), reason="Testing new style middleware")
 @pytest.mark.parametrize("list_or_tuple", [list, tuple])
-@skip_unless_old_style_middleware
-def test_old_style_middleware(list_or_tuple):
-    with override_settings(
-        MIDDLEWARE_CLASSES=list_or_tuple(["django.middleware.common.CommonMiddleware"])
-    ):
-        with app_with_scout():
-            assert settings.MIDDLEWARE_CLASSES == list_or_tuple(
-                [
-                    "scout_apm.django.middleware.OldStyleMiddlewareTimingMiddleware",
-                    "django.middleware.common.CommonMiddleware",
-                    "scout_apm.django.middleware.OldStyleViewMiddleware",
-                ]
-            )
+@pytest.mark.parametrize("preinstalled", [True, False])
+def test_install_middleware_new_style(list_or_tuple, preinstalled):
+    if preinstalled:
+        middleware = list_or_tuple(
+            [
+                "scout_apm.django.middleware.MiddlewareTimingMiddleware",
+                "django.middleware.common.CommonMiddleware",
+                "scout_apm.django.middleware.ViewTimingMiddleware",
+            ]
+        )
+    else:
+        middleware = list_or_tuple(["django.middleware.common.CommonMiddleware"])
+
+    with override_settings(MIDDLEWARE=middleware):
+        apps.get_app_config("scout_apm").install_middleware()
+
+        assert settings.MIDDLEWARE == list_or_tuple(
+            [
+                "scout_apm.django.middleware.MiddlewareTimingMiddleware",
+                "django.middleware.common.CommonMiddleware",
+                "scout_apm.django.middleware.ViewTimingMiddleware",
+            ]
+        )
 
 
 def test_application_root():

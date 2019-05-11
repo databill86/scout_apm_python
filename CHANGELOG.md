@@ -7,8 +7,8 @@
 - Tested on Django 2.2
 - Added PyPI Trove classifiers for supported Django versions
 - Track usernames on Django < 1.10
-- Support tracking queue timing tracked by time from time middleware starts
-  after the value of the `X-Queue-Start` or `X-Request-Start` header
+- Add Django support for tracking request queue timing from the value of the
+  `X-Queue-Start` or `X-Request-Start` header.
 
 ### Fixed
 

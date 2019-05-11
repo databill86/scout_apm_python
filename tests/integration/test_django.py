@@ -351,13 +351,9 @@ def test_queue_time(header_name, tracked_requests):
         assert response.status_int == 200
 
     assert len(tracked_requests) == 1
-    spans = tracked_requests[0].complete_spans
-    assert [s.operation for s in spans] == [
-        "QueueTime/Request",
-        "Controller/tests.integration.django_app.home",
-        "Middleware",
-    ]
-    assert spans[0].start_time == datetime.utcfromtimestamp(queue_start)
+    queue_time_us = tracked_requests[0].tags["scout.queue_time_us"]
+    # Upper bound assumes we didn't take more than 1s to run this test...
+    assert queue_time_us >= 2000000 and queue_time_us < 3000000
 
 
 def test_queue_time_invalid(tracked_requests):

@@ -30,11 +30,12 @@ def track_request_queue_time(request, tracked_request):
 
     parsed_start = datetime.utcfromtimestamp(timestamp)
     # Ignore if in the future
-    if parsed_start > datetime.utcnow():
+    if parsed_start > tracked_request.start_time:
         return
 
-    tracked_request.start_span(operation="QueueTime/Request", start_time=parsed_start)
-    tracked_request.stop_span()
+    queue_time = tracked_request.start_time - parsed_start
+    queue_time_us = int(queue_time.total_seconds() * 1000000)
+    tracked_request.tag("scout.queue_time_us", queue_time_us)
 
 
 class MiddlewareTimingMiddleware(object):

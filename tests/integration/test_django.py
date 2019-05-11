@@ -4,7 +4,6 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import os.path
 import time
 from contextlib import contextmanager
-from datetime import datetime
 
 import django
 import pytest
@@ -352,8 +351,8 @@ def test_queue_time(header_name, tracked_requests):
 
     assert len(tracked_requests) == 1
     queue_time_us = tracked_requests[0].tags["scout.queue_time_us"]
-    # Upper bound assumes we didn't take more than 1s to run this test...
-    assert queue_time_us >= 2000000 and queue_time_us < 3000000
+    # Upper bound assumes we didn't take more than 2s to run this test...
+    assert queue_time_us >= 2000000 and queue_time_us < 4000000
 
 
 def test_queue_time_invalid(tracked_requests):
